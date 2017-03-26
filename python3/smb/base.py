@@ -2169,11 +2169,16 @@ c8 4f 32 4b 70 16 d3 01 12 78 5a 47 bf 6e e1 88
         messages_history = [ ]
 
         def sendOpen(tid):
-            m = SMBMessage(ComOpenAndxRequest(filename = path,
-                                              access_mode = 0x0040,  # Sharing mode: Deny nothing to others
-                                              open_mode = 0x0001,    # Failed if file does not exist
-                                              search_attributes = SMB_FILE_ATTRIBUTE_HIDDEN | SMB_FILE_ATTRIBUTE_SYSTEM,
-                                              timeout = timeout * 1000))
+            m = SMBMessage(ComNTCreateAndxRequest(filename = path,
+                                                  flags = NT_CREATE_REQUEST_OPLOCK | NT_CREATE_REQUEST_OPBATCH | NT_CREATE_REQUEST_EXTENDED_RESPONSE,
+                                                  access_mask = READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_READ_EA | FILE_READ_DATA,
+                                                  ext_attr = ATTR_NORMAL,
+                                                  share_access = FILE_SHARE_READ,
+                                                  create_disp = FILE_OPEN,
+                                                  create_options = FILE_NON_DIRECTORY_FILE,
+                                                  impersonation = SEC_IMPERSONATE,
+                                                  security_flags = SMB_SECURITY_CONTEXT_TRACKING | SMB_SECURITY_EFFECTIVE_ONLY))
+
             m.tid = tid
             self._sendSMBMessage(m)
             self.pending_requests[m.mid] = _PendingRequest(m.mid, int(time.time()) + timeout, openCB, errback)
@@ -2184,13 +2189,13 @@ c8 4f 32 4b 70 16 d3 01 12 78 5a 47 bf 6e e1 88
             if not open_message.status.hasError:
                 if max_length == 0:
                     closeFid(open_message.tid, open_message.payload.fid)
-                    callback(( file_obj, open_message.payload.file_attributes, 0 ))
+                    callback(( file_obj, 0 ))
                 else:
-                    sendRead(open_message.tid, open_message.payload.fid, starting_offset, open_message.payload.file_attributes, 0, max_length)
+                    sendRead(open_message.tid, open_message.payload.fid, starting_offset, 0, max_length)
             else:
                 errback(OperationFailure('Failed to retrieve %s on %s: Unable to open file' % ( path, service_name ), messages_history))
 
-        def sendRead(tid, fid, offset, file_attributes, read_len, remaining_len):
+        def sendRead(tid, fid, offset, read_len, remaining_len):
             read_count = self.max_raw_size - 2
             m = SMBMessage(ComReadAndxRequest(fid = fid,
                                               offset = offset,
@@ -2198,7 +2203,7 @@ c8 4f 32 4b 70 16 d3 01 12 78 5a 47 bf 6e e1 88
                                               min_return_bytes_count = min(0xFFFF, read_count)))
             m.tid = tid
             self._sendSMBMessage(m)
-            self.pending_requests[m.mid] = _PendingRequest(m.mid, int(time.time()) + timeout, readCB, errback, fid = fid, offset = offset, file_attributes = file_attributes,
+            self.pending_requests[m.mid] = _PendingRequest(m.mid, int(time.time()) + timeout, readCB, errback, fid = fid, offset = offset,
                                                            read_len = read_len, remaining_len = remaining_len)
 
         def readCB(read_message, **kwargs):
@@ -2222,9 +2227,9 @@ c8 4f 32 4b 70 16 d3 01 12 78 5a 47 bf 6e e1 88
 
                 if (max_length > 0 and remaining_len <= 0) or data_len < (self.max_raw_size - 2):
                     closeFid(read_message.tid, kwargs['fid'])
-                    callback(( file_obj, kwargs['file_attributes'], read_len ))  # Note that this is a tuple of 3-elements
+                    callback(( file_obj, read_len ))  # Note that this is a tuple of 3-elements
                 else:
-                    sendRead(read_message.tid, kwargs['fid'], kwargs['offset']+data_len, kwargs['file_attributes'], read_len, remaining_len)
+                    sendRead(read_message.tid, kwargs['fid'], kwargs['offset']+data_len, read_len, remaining_len)
             else:
                 messages_history.append(read_message)
                 closeFid(read_message.tid, kwargs['fid'])
@@ -2262,12 +2267,22 @@ c8 4f 32 4b 70 16 d3 01 12 78 5a 47 bf 6e e1 88
         path = path.replace('/', '\\')
         messages_history = [ ]
 
+        file_cur_pos = file_obj.tell()
+        file_obj.seek(0, 2) # SEEK_END
+        file_size = file_obj.tell()
+        file_obj.seek(file_cur_pos, 0) # SEEK_SET
+
         def sendOpen(tid):
-            m = SMBMessage(ComOpenAndxRequest(filename = path,
-                                              access_mode = 0x0041,  # Sharing mode: Deny nothing to others + Open for writing
-                                              open_mode = 0x0012 if truncate else 0x0011,    # Create file if file does not exist. Overwrite or append depending on truncate parameter.
-                                              search_attributes = SMB_FILE_ATTRIBUTE_HIDDEN | SMB_FILE_ATTRIBUTE_SYSTEM,
-                                              timeout = timeout * 1000))
+            # TODO: Add truncate flag
+            m = SMBMessage(ComNTCreateAndxRequest(filename = path,
+                                                  flags = NT_CREATE_REQUEST_OPLOCK | NT_CREATE_REQUEST_OPBATCH | NT_CREATE_REQUEST_EXTENDED_RESPONSE,
+                                                  access_mask = WRITE_DAC | READ_CONTROL | FILE_WRITE_ATTRIBUTES | FILE_READ_ATTRIBUTES | FILE_WRITE_EA | FILE_READ_EA | FILE_APPEND_DATA | FILE_WRITE_DATA | FILE_READ_DATA,
+                                                  allocation_size = file_size,
+                                                  ext_attr = ATTR_ARCHIVE,
+                                                  create_disp = FILE_CREATE,
+                                                  create_options = FILE_NON_DIRECTORY_FILE | FILE_SEQUENTIAL_ONLY,
+                                                  impersonation = SEC_IMPERSONATE))
+
             m.tid = tid
             self._sendSMBMessage(m)
             self.pending_requests[m.mid] = _PendingRequest(m.mid, int(time.time()) + timeout, openCB, errback)
@@ -2375,6 +2390,14 @@ c8 4f 32 4b 70 16 d3 01 12 78 5a 47 bf 6e e1 88
 
         def sendCreate(tid):
             m = SMBMessage(ComCreateDirectoryRequest(path))
+
+            m = SMBMessage(ComNTCreateAndxRequest(filename = path,
+                                                  flags = NT_CREATE_REQUEST_EXTENDED_RESPONSE,
+                                                  access_mask = SYNCHRONIZE | WRITE_DAC | READ_CONTROL | DELETE | FILE_WRITE_ATTRIBUTES | FILE_READ_ATTRIBUTES | FILE_WRITE_EA | FILE_READ_EA | FILE_WRITE_DATA | FILE_READ_DATA,
+                                                  create_disp = FILE_CREATE,
+                                                  create_options = FILE_DIRECTORY_FILE,
+                                                  impersonation = SEC_IMPERSONATE))
+
             m.tid = tid
             self._sendSMBMessage(m)
             self.pending_requests[m.mid] = _PendingRequest(m.mid, int(time.time()) + timeout, createCB, errback)
