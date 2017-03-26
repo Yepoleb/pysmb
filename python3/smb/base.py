@@ -1582,15 +1582,17 @@ c8 4f 32 4b 70 16 d3 01 12 78 5a 47 bf 6e e1 88
                     if not message.status.hasError:
                         try:
                             result = securityblob.decodeAuthResponseSecurityBlob(message.payload.security_blob)
-                            if result == securityblob.RESULT_ACCEPT_COMPLETED:
-                                self.log.debug('SMB uid is now %d', message.uid)
-                                self.uid = message.uid
-                                self.has_authenticated = True
-                                self.log.info('Authentication (with extended security) successful!')
-                                self.onAuthOK()
-                            else:
+                            if result != securityblob.RESULT_ACCEPT_COMPLETED:
                                 raise ProtocolError('SMB_COM_SESSION_SETUP_ANDX status is 0 but security blob negResult value is %d' % result, message.raw_data, message)
                         except securityblob.BadSecurityBlobError as ex:
+                            self.log.info('Ignoring bad security token')
+                        try:
+                            self.log.debug('SMB uid is now %d', message.uid)
+                            self.uid = message.uid
+                            self.has_authenticated = True
+                            self.log.info('Authentication (with extended security) successful!')
+                            self.onAuthOK()
+                        except:
                             raise ProtocolError(str(ex), message.raw_data, message)
                     elif message.status.internal_value == 0xc0000016:  # STATUS_MORE_PROCESSING_REQUIRED
                         try:
