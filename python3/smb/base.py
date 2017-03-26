@@ -1551,6 +1551,11 @@ c8 4f 32 4b 70 16 d3 01 12 78 5a 47 bf 6e e1 88
             smb_message.raw_data = raw_data[:14] + signature + raw_data[22:]
         else:
             smb_message.raw_data = smb_message.encode()
+
+        self.log.debug('Sent SMB message "%s" (command:0x%2X flags:0x%02X flags2:0x%04X TID:%d UID:%d)',
+                       SMB_COMMAND_NAMES.get(smb_message.command, '<unknown>'),
+                       smb_message.command, smb_message.flags, smb_message.flags2, smb_message.tid, smb_message.uid)
+
         self.sendNMBMessage(smb_message.raw_data)
 
     def _getNextMID_SMB1(self):
