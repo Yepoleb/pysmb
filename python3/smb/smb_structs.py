@@ -78,6 +78,13 @@ class OperationFailure(Exception):
 
         return b.getvalue()
 
+    @property
+    def status(self):
+        if not self.smb_messages:
+            return None
+        else:
+            return self.smb_messages[-1].status
+
 
 class SMBError:
 
@@ -90,9 +97,16 @@ class SMBError:
 
     def __str__(self):
         if self.is_ntstatus:
-            return 'NTSTATUS=0x%08X' % self.internal_value
+            return 'NTSTATUS=0x%08X (%s)' % ( self.internal_value, self.name )
         else:
-            return 'ErrorClass=0x%02X ErrorCode=0x%04X' % ( self.internal_value >> 24, self.internal_value & 0xFFFF )
+            return 'ErrorClass=0x%02X ErrorCode=0x%04X (%s)' % ( self.internal_value >> 24, self.internal_value & 0xFFFF , self.name)
+
+    @property
+    def name(self):
+        if self.is_ntstatus:
+            return STATUS_NAMES.get(self.internal_value, "STATUS_UNKNOWN")
+        else:
+            return ERROR_NAMES.get(self.internal_value, "ERROR_UNKNOWN")
 
     @property
     def hasError(self):
